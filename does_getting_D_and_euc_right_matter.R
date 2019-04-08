@@ -3,6 +3,8 @@ library(tidyverse)
 #install_github("rachelphillip/SCR-Book/scrmlebook")
 library(scrmlebook)
 library(pals)
+library(raster)
+library(secr)
 
 # be sure to check you're using the right kind of LC distance calculations!!
 source("noneuc-utils.R")
@@ -40,7 +42,7 @@ simulated_points_D0 <- sim.popn(D = D0_for_sim,
                                 seed = 123)
 
 # non-uniform AC density (fiddle n_pts a bit to get exactly 200, not sure why)
-# ac density is potentially a function of distance to stream, so add this as a mesh covariate.
+# ac density is potentially a function of stdGC, so add this as a mesh covariate.
 # introduce an alpha3 parameter controlling strength of relationship
 alpha3 <- 1.5 
 covariates(aoi_mesh)$Dac <- exp(alpha3 * covariates(aoi_mesh)$stdGC)
@@ -57,11 +59,11 @@ aoi_df %>% ggplot(aes(x, y)) + geom_raster(aes(fill = stdGC)) +
   geom_point(data = detectors_df, color = "green", size = 2, shape = 3) +
   ggtitle("Flat density")
 
-# plot the ACs generated from D ~ dist_to_stream
+# plot the ACs generated from D ~ Dcov
 aoi_df %>% ggplot(aes(x, y)) + geom_raster(aes(fill = stdGC)) + 
   geom_point(data = simulated_points_Dcov, color = "red") +
   geom_point(data = detectors_df, color = "green", size = 2, shape = 3) +
-  ggtitle("ACs closer to streams")
+  ggtitle("ACs denser in higher stdGC")
 
 #######################################
 #### Generate capture histories
@@ -76,7 +78,7 @@ alpha1 <- 1 / (2 * sigma^2)
 alpha2 <- 0.3 # true non-euc parameter -- cost/friction ~ exp(alpha2 * cov) (see below)
 K <- 10 # sampling over 10 occasions, collapsed to 1 occasion
 
-# create pixel-specific cost/friction ~ distance to stream, and assign to the simulated popn objects 
+# create pixel-specific cost/friction ~ stdGC, and assign to the simulated popn objects 
 covariates(aoi_mesh)$noneuc <- exp(alpha2 * covariates(aoi_mesh)$stdGC)
 attr(simulated_points_D0, "mask") <- aoi_mesh
 attr(simulated_points_Dcov, "mask") <- aoi_mesh
@@ -154,13 +156,28 @@ mod_4 <-secr.fit(ch, detectfn = "HHN", mask = aoi_mesh,
                  link = list(noneuc = "log"))
 coefficients(mod_4)
 
+
 # model 5: as for model 4 but exponentiate inside LCdist and use identity link
 mymean = function(x) mean(exp(x))
-mod_5l <-secr.fit(ch_actual, detectfn = "HHN", mask = aoi_mesh,
-                        model= list(D ~ stdGC, noneuc ~ stdGC -1),
-                        details = list(userdist = myLCdist),
-                        start = startvals,
-                        link = list(noneuc = "identity"))
+# David changed "ch_actual" to "ch" in line below
+#mod_5l <-secr.fit(ch_actual, detectfn = "HHN", mask = aoi_mesh,
+mod_5l <-secr.fit(ch, detectfn = "HHN", mask = aoi_mesh,
+                  model= list(D ~ stdGC, noneuc ~ stdGC -1),
+                  details = list(userdist = myLCdist),
+                  start = startvals,
+                  link = list(noneuc = "identity"))
+
+# Check: fit model 4, but using identity link function:
+mymean = function(x) exp(mean(x))
+mod_4l <-secr.fit(ch, detectfn = "HHN", mask = aoi_mesh,
+                  model= list(D ~ stdGC, noneuc ~ stdGC -1),
+                  details = list(userdist = myLCdist),
+                  start = startvals,
+                  link = list(noneuc = "identity"))
+
+
+AIC(mod_1,mod_2,mod_3,mod_4,mod_5l,mod_4l)
+
 # reset to what it was
 mymean <- function(x){mean(x)}
 #mymean <- function(x){(prod(x)^(1/length(x)))}
